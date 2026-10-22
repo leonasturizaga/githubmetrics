@@ -179,4 +179,155 @@ public List<ContributorStatsDto> getContributorsStats() {
             .toList();
 }
 
+// ====================== ACCURATE ENDPOINTS ======================
+
+public AccurateMetricsResponse getAccurateMetrics() {
+    List<Map<String, Object>> allPrs = fetchAllPullRequests(); // reuse existing method
+    List<PrDetailDto> prDetails = enrichPullRequests(allPrs);
+
+    List<CommitAuthorDto> commitAuthors = fetchCommitAuthors();
+
+    int totalCommits = commitAuthors.stream()
+            .mapToInt(CommitAuthorDto::getTotalCommits)
+            .sum();
+
+    // Owner percentage (assuming the first or matching owner)
+    int ownerCommits = commitAuthors.stream()
+            .filter(c -> c.getUsername().equalsIgnoreCase(owner))
+            .mapToInt(CommitAuthorDto::getTotalCommits)
+            .findFirst()
+            .orElse(0);
+
+    double ownerPct = totalCommits == 0 ? 0.0 :
+            Math.round((ownerCommits * 10000.0) / totalCommits) / 100.0;
+
+    return AccurateMetricsResponse.builder()
+            .repo(owner + "/" + repo)
+            .baseBranch(baseBranch)
+            .commitAuthors(commitAuthors)
+            .pullRequests(prDetails)
+            .totalCommits(totalCommits)
+            .ownerCommitPercentage(ownerPct)
+            .build();
+}
+
+private List<PrDetailDto> enrichPullRequests(List<Map<String, Object>> prs) {
+    List<PrDetailDto> result = new ArrayList<>();
+
+    for (Map<String, Object> pr : prs) {
+        int number = ((Number) pr.get("number")).intValue();
+        String author = ((Map<String, Object>) pr.get("user")).get("login").toString();
+        String state = (String) pr.get("state");
+        boolean merged = pr.get("merged_at") != null;
+        String createdAt = (String) pr.get("created_at");
+        String mergedAt = (String) pr.get("merged_at");
+        String headBranch = ((Map<String, Object>) pr.get("head")).get("ref").toString();
+
+        // Get files changed + lines
+        List<Map<String, Object>> files = webClient.get()
+                .uri("/repos/{owner}/{repo}/pulls/{number}/files", owner, repo, number)
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                .block();
+
+        int additions = 0;
+        int deletions = 0;
+        int filesChanged = files != null ? files.size() : 0;
+
+        if (files != null) {
+            for (Map<String, Object> f : files) {
+                additions += ((Number) f.getOrDefault("additions", 0)).intValue();
+                deletions += ((Number) f.getOrDefault("deletions", 0)).intValue();
+            }
+        }
+
+        // Get number of commits in the PR
+        List<Map<String, Object>> commits = webClient.get()
+                .uri("/repos/{owner}/{repo}/pulls/{number}/commits", owner, repo, number)
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                .block();
+
+        int commitCount = commits != null ? commits.size() : 0;
+
+        result.add(PrDetailDto.builder()
+                .number(number)
+                .title((String) pr.get("title"))
+                .author(author)
+                .state(state)
+                .merged(merged)
+                .createdAt(createdAt)
+                .mergedAt(mergedAt)
+                .headBranch(headBranch)
+                .commits(commitCount)
+                .filesChanged(filesChanged)
+                .additions(additions)
+                .deletions(deletions)
+                .build());
+    }
+
+    return result;
+}
+
+private List<CommitAuthorDto> fetchCommitAuthors() {
+    Map<String, CommitAuthorDto> map = new HashMap<>();
+    int page = 1;
+    boolean hasMore = true;
+
+    while (hasMore) {
+        final int currentPage = page;
+
+        List<Map<String, Object>> commits = webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/repos/{owner}/{repo}/commits")
+                        .queryParam("per_page", 100)
+                        .queryParam("page", currentPage)
+                        .build(owner, repo))
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                .block();
+
+        if (commits == null || commits.isEmpty()) {
+            hasMore = false;
+        } else {
+            for (Map<String, Object> c : commits) {
+                Map<String, Object> authorObj = (Map<String, Object>) c.get("author");
+                if (authorObj == null) continue;
+
+                String login = (String) authorObj.get("login");
+                if (login == null) continue;
+
+                // Get stats from commit
+                Map<String, Object> stats = (Map<String, Object>) c.get("stats");
+                int additions = stats != null ? ((Number) stats.getOrDefault("additions", 0)).intValue() : 0;
+                int deletions = stats != null ? ((Number) stats.getOrDefault("deletions", 0)).intValue() : 0;
+
+                map.compute(login, (k, existing) -> {
+                    if (existing == null) {
+                        return CommitAuthorDto.builder()
+                                .username(login)
+                                .totalCommits(1)
+                                .totalAdditions(additions)
+                                .totalDeletions(deletions)
+                                .build();
+                    } else {
+                        existing.setTotalCommits(existing.getTotalCommits() + 1);
+                        existing.setTotalAdditions(existing.getTotalAdditions() + additions);
+                        existing.setTotalDeletions(existing.getTotalDeletions() + deletions);
+                        return existing;
+                    }
+                });
+            }
+            page++;
+            if (commits.size() < 100) hasMore = false;
+        }
+    }
+
+    return map.values().stream()
+            .sorted((a, b) -> Integer.compare(b.getTotalCommits(), a.getTotalCommits()))
+            .toList();
+}
+
+
+
 }
