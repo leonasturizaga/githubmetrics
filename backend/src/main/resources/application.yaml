@@ -1,0 +1,12 @@
+server:
+  port: 8080
+
+github:
+  token: ${GITHUB_TOKEN:}          # set via env var or put temporarily here
+  owner: your-github-username      # change this
+  repo: your-private-repo-name     # change this
+  base-branch: DEV                 # or main / develop / whatever you use
+
+spring:
+  application:
+    name: github-metrics
