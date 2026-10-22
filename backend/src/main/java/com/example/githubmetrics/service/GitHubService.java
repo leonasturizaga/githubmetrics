@@ -55,13 +55,15 @@ public class GitHubService {
         boolean hasMore = true;
 
         while (hasMore) {
-            List<Map<String, Object>> pageResult = webClient.get()
+                     final int currentPage = page;   // ← this is the fix
+
+                     List<Map<String, Object>> pageResult = webClient.get()
                     .uri(uriBuilder -> uriBuilder
                             .path("/repos/{owner}/{repo}/pulls")
                             .queryParam("state", "all")
                             .queryParam("base", baseBranch)
                             .queryParam("per_page", 100)
-                            .queryParam("page", page)
+                            .queryParam("page", currentPage)
                             .build(owner, repo))
                     .retrieve()
                     .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
