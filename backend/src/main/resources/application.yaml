@@ -5,7 +5,7 @@ github:
   token: ${GITHUB_TOKEN}
   owner: ${GITHUB_OWNER}
   repo: ${GITHUB_REPO}
-  base-branch: ${GITHUB_BASE_BRANCH:DEV}   # default to DEV if not set
+  base-branch: ${GITHUB_BASE_BRANCH:dev}   # default to DEV if not set
 
 spring:
   application:
