@@ -13,112 +13,170 @@ import java.util.stream.Collectors;
 @Service
 public class GitHubService {
 
-    private final WebClient webClient;
+   private final WebClient webClient;
 
-    @Value("${github.owner}")
-    private String owner;
+   @Value("${github.owner}")
+   private String owner;
 
-    @Value("${github.repo}")
-    private String repo;
+   @Value("${github.repo}")
+   private String repo;
 
-    @Value("${github.base-branch}")
-    private String baseBranch;
+   @Value("${github.base-branch}")
+   private String baseBranch;
 
-    public GitHubService(WebClient githubWebClient) {
-        this.webClient = githubWebClient;
+   public GitHubService(WebClient githubWebClient) {
+      this.webClient = githubWebClient;
+   }
+
+   public TeamMetricsResponse getTeamMetrics() {
+      List<Map<String, Object>> allPrs = fetchAllPullRequests();
+
+      Map<String, List<Map<String, Object>>> byAuthor = allPrs.stream()
+            .collect(Collectors.groupingBy(pr -> {
+               Map<String, Object> user = (Map<String, Object>) pr.get("user");
+               return (String) user.get("login");
+            }));
+
+      List<MemberMetricDto> members = byAuthor.entrySet().stream()
+            .map(entry -> buildMemberMetric(entry.getKey(), entry.getValue()))
+            .sorted(Comparator.comparingInt(MemberMetricDto::getMergedToDev).reversed())
+            .toList();
+
+      return TeamMetricsResponse.builder()
+            .repo(owner + "/" + repo)
+            .baseBranch(baseBranch)
+            .members(members)
+            .build();
+   }
+
+   private List<Map<String, Object>> fetchAllPullRequests() {
+      List<Map<String, Object>> all = new ArrayList<>();
+      int page = 1;
+      boolean hasMore = true;
+
+      while (hasMore) {
+         final int currentPage = page; // ← this is the fix
+
+         List<Map<String, Object>> pageResult = webClient.get()
+               .uri(uriBuilder -> uriBuilder
+                     .path("/repos/{owner}/{repo}/pulls")
+                     .queryParam("state", "all")
+                     .queryParam("base", baseBranch)
+                     .queryParam("per_page", 100)
+                     .queryParam("page", currentPage)
+                     .build(owner, repo))
+               .retrieve()
+               .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {
+               })
+               .block();
+
+         if (pageResult == null || pageResult.isEmpty()) {
+            hasMore = false;
+         } else {
+            all.addAll(pageResult);
+            page++;
+            if (pageResult.size() < 100)
+               hasMore = false;
+         }
+      }
+      return all;
+   }
+
+   private MemberMetricDto buildMemberMetric(String username, List<Map<String, Object>> prs) {
+      int total = prs.size();
+      int merged = 0;
+      int open = 0;
+      long additions = 0;
+      long deletions = 0;
+      int filesSum = 0;
+      String lastActivity = null;
+
+      for (Map<String, Object> pr : prs) {
+         String state = (String) pr.get("state");
+         Boolean mergedFlag = (Boolean) pr.get("merged"); // sometimes present
+         String mergedAt = (String) pr.get("merged_at");
+
+         if ("open".equals(state)) {
+            open++;
+         }
+         if (mergedAt != null || Boolean.TRUE.equals(mergedFlag)) {
+            merged++;
+         }
+
+         // For real size we would call /pulls/{number}/files – keep simple for now
+         // You can enrich later
+
+         String updated = (String) pr.get("updated_at");
+         if (lastActivity == null || (updated != null && updated.compareTo(lastActivity) > 0)) {
+            lastActivity = updated;
+         }
+      }
+
+      return MemberMetricDto.builder()
+            .username(username)
+            .totalPrs(total)
+            .mergedToDev(merged)
+            .openPrs(open)
+            .totalAdditions(additions) // placeholder – enrich later
+            .totalDeletions(deletions)
+            .avgFilesChanged(0)
+            .lastActivity(lastActivity)
+            .build();
+   }
+
+public ParticipationStatsDto getParticipationStats() {
+    Map<String, Object> response = webClient.get()
+            .uri("/repos/{owner}/{repo}/stats/participation", owner, repo)
+            .retrieve()
+            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+            .block();
+
+    if (response == null) {
+        throw new RuntimeException("Empty response from GitHub participation stats");
     }
 
-    public TeamMetricsResponse getTeamMetrics() {
-        List<Map<String, Object>> allPrs = fetchAllPullRequests();
+    List<Integer> all = (List<Integer>) response.get("all");
+    List<Integer> ownerCommits = (List<Integer>) response.get("owner");
 
-        Map<String, List<Map<String, Object>>> byAuthor = allPrs.stream()
-                .collect(Collectors.groupingBy(pr -> {
-                    Map<String, Object> user = (Map<String, Object>) pr.get("user");
-                    return (String) user.get("login");
-                }));
+    int totalAll = all.stream().mapToInt(Integer::intValue).sum();
+    int totalOwner = ownerCommits.stream().mapToInt(Integer::intValue).sum();
 
-        List<MemberMetricDto> members = byAuthor.entrySet().stream()
-                .map(entry -> buildMemberMetric(entry.getKey(), entry.getValue()))
-                .sorted(Comparator.comparingInt(MemberMetricDto::getMergedToDev).reversed())
-                .toList();
+    double percentage = totalAll == 0 ? 0.0 : (totalOwner * 100.0) / totalAll;
 
-        return TeamMetricsResponse.builder()
-                .repo(owner + "/" + repo)
-                .baseBranch(baseBranch)
-                .members(members)
-                .build();
+    return ParticipationStatsDto.builder()
+            .all(all)
+            .owner(ownerCommits)
+            .totalAllCommits(totalAll)
+            .totalOwnerCommits(totalOwner)
+            .ownerParticipationPercentage(Math.round(percentage * 100.0) / 100.0)
+            .build();
+}
+
+public List<ContributorStatsDto> getContributorsStats() {
+    List<Map<String, Object>> response = webClient.get()
+            .uri("/repos/{owner}/{repo}/stats/contributors", owner, repo)
+            .retrieve()
+            .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+            .block();
+
+    if (response == null || response.isEmpty()) {
+        return List.of();
     }
 
-    private List<Map<String, Object>> fetchAllPullRequests() {
-        List<Map<String, Object>> all = new ArrayList<>();
-        int page = 1;
-        boolean hasMore = true;
+    return response.stream()
+            .map(item -> {
+                Map<String, Object> author = (Map<String, Object>) item.get("author");
+                String username = author != null ? (String) author.get("login") : "unknown";
+                int total = ((Number) item.get("total")).intValue();
 
-        while (hasMore) {
-                     final int currentPage = page;   // ← this is the fix
+                return ContributorStatsDto.builder()
+                        .username(username)
+                        .totalCommits(total)
+                        .weeks((List<Map<String, Object>>) item.get("weeks"))
+                        .build();
+            })
+            .sorted((a, b) -> Integer.compare(b.getTotalCommits(), a.getTotalCommits()))
+            .toList();
+}
 
-                     List<Map<String, Object>> pageResult = webClient.get()
-                    .uri(uriBuilder -> uriBuilder
-                            .path("/repos/{owner}/{repo}/pulls")
-                            .queryParam("state", "all")
-                            .queryParam("base", baseBranch)
-                            .queryParam("per_page", 100)
-                            .queryParam("page", currentPage)
-                            .build(owner, repo))
-                    .retrieve()
-                    .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
-                    .block();
-
-            if (pageResult == null || pageResult.isEmpty()) {
-                hasMore = false;
-            } else {
-                all.addAll(pageResult);
-                page++;
-                if (pageResult.size() < 100) hasMore = false;
-            }
-        }
-        return all;
-    }
-
-    private MemberMetricDto buildMemberMetric(String username, List<Map<String, Object>> prs) {
-        int total = prs.size();
-        int merged = 0;
-        int open = 0;
-        long additions = 0;
-        long deletions = 0;
-        int filesSum = 0;
-        String lastActivity = null;
-
-        for (Map<String, Object> pr : prs) {
-            String state = (String) pr.get("state");
-            Boolean mergedFlag = (Boolean) pr.get("merged"); // sometimes present
-            String mergedAt = (String) pr.get("merged_at");
-
-            if ("open".equals(state)) {
-                open++;
-            }
-            if (mergedAt != null || Boolean.TRUE.equals(mergedFlag)) {
-                merged++;
-            }
-
-            // For real size we would call /pulls/{number}/files – keep simple for now
-            // You can enrich later
-
-            String updated = (String) pr.get("updated_at");
-            if (lastActivity == null || (updated != null && updated.compareTo(lastActivity) > 0)) {
-                lastActivity = updated;
-            }
-        }
-
-        return MemberMetricDto.builder()
-                .username(username)
-                .totalPrs(total)
-                .mergedToDev(merged)
-                .openPrs(open)
-                .totalAdditions(additions)      // placeholder – enrich later
-                .totalDeletions(deletions)
-                .avgFilesChanged(0)
-                .lastActivity(lastActivity)
-                .build();
-    }
 }
