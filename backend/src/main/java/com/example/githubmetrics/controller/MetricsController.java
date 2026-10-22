@@ -110,5 +110,27 @@ public ResponseEntity<?> getAccurateMetrics() {
     }
 }
 
+@GetMapping("/commits")
+public ResponseEntity<?> getCommits() {
+    try {
+        return ResponseEntity.ok(gitHubService.getCommitsByAuthor());
+    } catch (Exception e) {
+        e.printStackTrace();
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", e.getMessage()));
+    }
+}
+
+@GetMapping("/pr-details")
+public ResponseEntity<?> getPrDetails() {
+    try {
+        return ResponseEntity.ok(gitHubService.getPrDetails());
+    } catch (Exception e) {
+        e.printStackTrace();
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", e.getMessage()));
+    }
+}
+
 
 }

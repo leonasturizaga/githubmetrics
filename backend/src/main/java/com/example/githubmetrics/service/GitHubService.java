@@ -181,35 +181,37 @@ public List<ContributorStatsDto> getContributorsStats() {
 
 // ====================== ACCURATE ENDPOINTS ======================
 
-public AccurateMetricsResponse getAccurateMetrics() {
-    List<Map<String, Object>> allPrs = fetchAllPullRequests(); // reuse existing method
-    List<PrDetailDto> prDetails = enrichPullRequests(allPrs);
+// this method will be replaced with more accurate metrics via PRs
 
-    List<CommitAuthorDto> commitAuthors = fetchCommitAuthors();
+// public AccurateMetricsResponse getAccurateMetrics() {
+//     List<Map<String, Object>> allPrs = fetchAllPullRequests(); // reuse existing method
+//     List<PrDetailDto> prDetails = enrichPullRequests(allPrs);
 
-    int totalCommits = commitAuthors.stream()
-            .mapToInt(CommitAuthorDto::getTotalCommits)
-            .sum();
+//     List<CommitAuthorDto> commitAuthors = fetchCommitAuthors();
 
-    // Owner percentage (assuming the first or matching owner)
-    int ownerCommits = commitAuthors.stream()
-            .filter(c -> c.getUsername().equalsIgnoreCase(owner))
-            .mapToInt(CommitAuthorDto::getTotalCommits)
-            .findFirst()
-            .orElse(0);
+//     int totalCommits = commitAuthors.stream()
+//             .mapToInt(CommitAuthorDto::getTotalCommits)
+//             .sum();
 
-    double ownerPct = totalCommits == 0 ? 0.0 :
-            Math.round((ownerCommits * 10000.0) / totalCommits) / 100.0;
+//     // Owner percentage (assuming the first or matching owner)
+//     int ownerCommits = commitAuthors.stream()
+//             .filter(c -> c.getUsername().equalsIgnoreCase(owner))
+//             .mapToInt(CommitAuthorDto::getTotalCommits)
+//             .findFirst()
+//             .orElse(0);
 
-    return AccurateMetricsResponse.builder()
-            .repo(owner + "/" + repo)
-            .baseBranch(baseBranch)
-            .commitAuthors(commitAuthors)
-            .pullRequests(prDetails)
-            .totalCommits(totalCommits)
-            .ownerCommitPercentage(ownerPct)
-            .build();
-}
+//     double ownerPct = totalCommits == 0 ? 0.0 :
+//             Math.round((ownerCommits * 10000.0) / totalCommits) / 100.0;
+
+//     return AccurateMetricsResponse.builder()
+//             .repo(owner + "/" + repo)
+//             .baseBranch(baseBranch)
+//             .commitAuthors(commitAuthors)
+//             .pullRequests(prDetails)
+//             .totalCommits(totalCommits)
+//             .ownerCommitPercentage(ownerPct)
+//             .build();
+// }
 
 private List<PrDetailDto> enrichPullRequests(List<Map<String, Object>> prs) {
     List<PrDetailDto> result = new ArrayList<>();
@@ -328,6 +330,70 @@ private List<CommitAuthorDto> fetchCommitAuthors() {
             .toList();
 }
 
+
+// ====================== SEPARATE ACCURATE ENDPOINTS ======================
+
+public List<CommitAuthorDto> getCommitsByAuthor() {
+    // We derive authors from the PRs (more accurate than /commits on default branch)
+    List<Map<String, Object>> allPrs = fetchAllPullRequests();
+    List<PrDetailDto> prDetails = enrichPullRequests(allPrs);
+
+    Map<String, CommitAuthorDto> map = new HashMap<>();
+
+    for (PrDetailDto pr : prDetails) {
+        map.compute(pr.getAuthor(), (k, existing) -> {
+            if (existing == null) {
+                return CommitAuthorDto.builder()
+                        .username(pr.getAuthor())
+                        .totalCommits(pr.getCommits())
+                        .totalAdditions(pr.getAdditions())
+                        .totalDeletions(pr.getDeletions())
+                        .build();
+            } else {
+                existing.setTotalCommits(existing.getTotalCommits() + pr.getCommits());
+                existing.setTotalAdditions(existing.getTotalAdditions() + pr.getAdditions());
+                existing.setTotalDeletions(existing.getTotalDeletions() + pr.getDeletions());
+                return existing;
+            }
+        });
+    }
+
+    return map.values().stream()
+            .sorted((a, b) -> Integer.compare(b.getTotalCommits(), a.getTotalCommits()))
+            .toList();
+}
+
+public List<PrDetailDto> getPrDetails() {
+    List<Map<String, Object>> allPrs = fetchAllPullRequests();
+    return enrichPullRequests(allPrs);
+}
+
+public AccurateMetricsResponse getAccurateMetrics() {
+    List<PrDetailDto> prDetails = getPrDetails();
+    List<CommitAuthorDto> commitAuthors = getCommitsByAuthor();
+
+    int totalCommits = commitAuthors.stream()
+            .mapToInt(CommitAuthorDto::getTotalCommits)
+            .sum();
+
+    int ownerCommits = commitAuthors.stream()
+            .filter(c -> c.getUsername().equalsIgnoreCase(owner))
+            .mapToInt(CommitAuthorDto::getTotalCommits)
+            .findFirst()
+            .orElse(0);
+
+    double ownerPct = totalCommits == 0 ? 0.0 :
+            Math.round((ownerCommits * 10000.0) / totalCommits) / 100.0;
+
+    return AccurateMetricsResponse.builder()
+            .repo(owner + "/" + repo)
+            .baseBranch(baseBranch)
+            .commitAuthors(commitAuthors)
+            .pullRequests(prDetails)
+            .totalCommits(totalCommits)
+            .ownerCommitPercentage(ownerPct)
+            .build();
+}
 
 
 }
