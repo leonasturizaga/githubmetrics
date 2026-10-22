@@ -95,4 +95,20 @@ public class MetricsController {
       }
    }
 
+@GetMapping("/accurate")
+public ResponseEntity<?> getAccurateMetrics() {
+    try {
+        return ResponseEntity.ok(gitHubService.getAccurateMetrics());
+    } catch (Exception e) {
+        e.printStackTrace();
+        return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of(
+                        "error", "Failed to fetch accurate metrics",
+                        "message", e.getMessage()
+                ));
+    }
+}
+
+
 }
