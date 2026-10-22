@@ -39,32 +39,60 @@ import java.util.Map;
 @CrossOrigin(origins = "http://localhost:5173")
 public class MetricsController {
 
-    private final GitHubService gitHubService;
+   private final GitHubService gitHubService;
 
-    public MetricsController(GitHubService gitHubService) {
-        this.gitHubService = gitHubService;
-    }
+   public MetricsController(GitHubService gitHubService) {
+      this.gitHubService = gitHubService;
+   }
 
-    @GetMapping("/team")
-    public ResponseEntity<?> getTeamMetrics() {
-        try {
-            TeamMetricsResponse response = gitHubService.getTeamMetrics();
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            e.printStackTrace(); // this will print the full stacktrace in the console
-            return ResponseEntity
-                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", "Failed to fetch GitHub metrics",
-                            "message", e.getMessage(),
-                            "exception", e.getClass().getSimpleName()
-                    ));
-        }
-    }
+   @GetMapping("/team")
+   public ResponseEntity<?> getTeamMetrics() {
+      try {
+         TeamMetricsResponse response = gitHubService.getTeamMetrics();
+         return ResponseEntity.ok(response);
+      } catch (Exception e) {
+         e.printStackTrace(); // this will print the full stacktrace in the console
+         return ResponseEntity
+               .status(HttpStatus.INTERNAL_SERVER_ERROR)
+               .body(Map.of(
+                     "error", "Failed to fetch GitHub metrics",
+                     "message", e.getMessage(),
+                     "exception", e.getClass().getSimpleName()));
+      }
+   }
 
-    // Simple health check
-    @GetMapping("/health")
-    public Map<String, String> health() {
-        return Map.of("status", "UP");
-    }
+   // Simple health check
+   @GetMapping("/health")
+   public Map<String, String> health() {
+      return Map.of("status", "UP");
+   }
+
+   @GetMapping("/participation")
+   public ResponseEntity<?> getParticipation() {
+      try {
+         return ResponseEntity.ok(gitHubService.getParticipationStats());
+      } catch (Exception e) {
+         e.printStackTrace();
+         return ResponseEntity
+               .status(HttpStatus.INTERNAL_SERVER_ERROR)
+               .body(Map.of(
+                     "error", "Failed to fetch participation stats",
+                     "message", e.getMessage()));
+      }
+   }
+
+   @GetMapping("/contributors")
+   public ResponseEntity<?> getContributors() {
+      try {
+         return ResponseEntity.ok(gitHubService.getContributorsStats());
+      } catch (Exception e) {
+         e.printStackTrace();
+         return ResponseEntity
+               .status(HttpStatus.INTERNAL_SERVER_ERROR)
+               .body(Map.of(
+                     "error", "Failed to fetch contributors stats",
+                     "message", e.getMessage()));
+      }
+   }
+
 }
