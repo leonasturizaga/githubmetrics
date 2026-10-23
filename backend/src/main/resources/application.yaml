@@ -7,6 +7,9 @@ github:
   repo: ${GITHUB_REPO}
   base-branch: ${GITHUB_BASE_BRANCH:dev}   # default to DEV if not set
 
+app:
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
 spring:
   application:
     name: github-metrics
